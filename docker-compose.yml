@@ -31,9 +31,11 @@ services:
   yolo_service:
     build: ./yolo
     container_name: yolo_service
+    runtime: nvidia
     volumes:
       - ./yolo:/usr/src/app
     environment:
+      - NVIDIA_VISIBLE_DEVICES=all
       - INFLUXDB_URL=${INFLUXDB_URL}
       - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
       - INFLUXDB_BUCKET=${INFLUXDB_BUCKET}
