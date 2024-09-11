@@ -10,7 +10,7 @@ grafana_data/
 # YOLOモデルなどの大きなファイル
 yolo/yolov8n.pt
 # カメラのリスト
-yolo/cameras.json
+#yolo/cameras.json
 
 # 環境変数ファイル (機密情報が含まれる)
-.env
+#.env
