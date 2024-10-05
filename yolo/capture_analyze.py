@@ -8,6 +8,7 @@ from influxdb_client import InfluxDBClient, Point
 from requests.exceptions import Timeout, RequestException
 from ultralytics import YOLO
 import threading
+from datetime import datetime, timedelta
 
 # 環境変数から設定を読み込む
 influx_url = os.getenv("INFLUXDB_URL")
@@ -30,8 +31,12 @@ TIMEOUT_SECONDS = 5
 MAX_RETRIES = 3
 INTERVAL_SECONDS = 5
 
-# グローバルにエラーカウントを保持
+# カメラ再起動後のクールダウン時間（5分）
+REBOOT_COOLDOWN_SECONDS = 300
+
+# グローバルにエラーカウントと最終再起動時刻を保持
 failure_counts = {}
+last_reboot_times = {}
 
 def load_camera_list(file_path):
     """JSONファイルからカメラリストを読み込む"""
@@ -50,13 +55,33 @@ def count_person(image):
     n_person = (labels == 0).sum().item()  # 0は人のクラスID
     return n_person
 
+def reboot_camera(camera_url):
+    """指定されたカメラを再起動する"""
+    global last_reboot_times
+    try:
+        reboot_url = f"{camera_url}/control?var=reboot&val=0"
+        response = requests.get(reboot_url, timeout=TIMEOUT_SECONDS)
+        response.raise_for_status()
+        print(f"Reboot request sent to {camera_url}")
+        # 再起動時刻を記録
+        last_reboot_times[camera_url] = datetime.now()
+    except requests.RequestException as e:
+        print(f"Failed to reboot camera {camera_url}: {e}")
+
 def process_camera(room_name, camera_url):
     """指定されたカメラの画像を取得して分析し、InfluxDBに結果を保存する"""
-    global failure_counts
+    global failure_counts, last_reboot_times
     
     retries = 0
     if camera_url not in failure_counts:
         failure_counts[camera_url] = 0
+
+    # 再起動後5分以内であれば、リクエストをスキップ
+    if camera_url in last_reboot_times:
+        elapsed_time = (datetime.now() - last_reboot_times[camera_url]).total_seconds()
+        if elapsed_time < REBOOT_COOLDOWN_SECONDS:
+            print(f"Skipping image request for {camera_url} due to recent reboot (wait {REBOOT_COOLDOWN_SECONDS - elapsed_time:.0f} seconds)")
+            return
 
     while retries < MAX_RETRIES:
         try:
@@ -109,9 +134,25 @@ def process_camera(room_name, camera_url):
 #        except RequestException as e:
 #            print(f"Error sending Slack notification: {str(e)}")
 
+def reboot_all_cameras():
+    """すべてのカメラを再起動する"""
+    camera_list = load_camera_list(CAMERA_LIST_FILE)
+    for camera in camera_list:
+        reboot_camera(camera['url'])
+
 def main():
     """メイン処理: カメラリストを読み込み、各カメラを5秒ごとに分析"""
+    last_reboot_day = None  # 最後に再起動を行った日付を記録
+
     while True:
+        current_time = datetime.now()
+
+        # 毎日3時にすべてのカメラを再起動
+        if current_time.hour == 3 and (last_reboot_day is None or last_reboot_day != current_time.date()):
+            print("Rebooting all cameras at 03:00 AM")
+            reboot_all_cameras()
+            last_reboot_day = current_time.date()  # 再起動を行った日付を記録
+
         camera_list = load_camera_list(CAMERA_LIST_FILE)
         if not camera_list:
             print("No cameras to process. Retrying in 60 seconds.")
